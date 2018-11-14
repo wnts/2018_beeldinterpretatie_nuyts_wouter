@@ -1,0 +1,10 @@
+# depslib dependency file v1.0
+1541754551 source:/home/student/Documents/wouternuyts/2018_beeldinterpretatie_wouter_nuyts/sessie_2/sessie_2/main.cpp
+	<iostream>
+	<opencv2/opencv.hpp>
+
+1542193852 source:/home/wouter/2018_beeldinterpretatie_nuyts_wouter/sessie_2/main.cpp
+	<iostream>
+	<opencv2/opencv.hpp>
+	<unistd.h>
+
