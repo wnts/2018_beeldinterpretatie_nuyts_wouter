@@ -33,3 +33,6 @@
 
 Debug/
 Bin/
+# Eclipse CDT project files
+.project
+.cproject
