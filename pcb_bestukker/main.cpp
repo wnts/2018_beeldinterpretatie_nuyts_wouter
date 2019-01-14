@@ -38,13 +38,45 @@ using namespace cv;
 
 int tbThrTplVal = 70;
 
+/**
+ * Helper function for reading in image files.
+ * A message is displayed when the file could not be loaded, and the program is exited through exit().
+ * @param destination OpenCV Mat to receive the image file contents.
+ * @param path        Path to image.
+ */
 void openImgFile(Mat &destination, const String &path)
 {
-    destination = imread(path);
+    destination = imread(path, IMREAD_UNCHANGED);
     if(destination.empty())
     {
         cerr << "Could not open " << path << endl;
         exit(2);
+    }
+}
+
+/**
+ * Helper function for copying one image into another, taking into account any transparant pixels.
+ * These pixels are not coppied to the destination image.
+ * @param dst  Destination image
+ * @param src  Source image
+ * @warn dst and src should have the same dimensions
+ */
+void copyToTransparent(Mat &imgDst, Mat &imgSrc)
+{
+    Mat imgSrcBGR = Mat(imgSrc.rows, imgSrc.cols, CV_8UC3);
+    Mat imgSrcAlpha = Mat(imgSrc.rows, imgSrc.cols, CV_8UC1);
+    Mat out[] = {imgSrcBGR, imgSrcAlpha};
+    int from_to[] = {0, 0, 1, 1, 2, 2, 3, 3};
+    mixChannels(&imgSrc, 1, out, 2, from_to, 4);
+    for(int r = 0; r < imgDst.rows; r++)
+    {
+        for(int c = 0; c < imgDst.cols; c++)
+        {
+            if(imgSrcAlpha.at<uchar>(r, c) > 0)
+            {
+                imgDst.at<Vec3b>(r, c) = imgSrcBGR.at<Vec3b>(r, c);
+            }
+        }
     }
 }
 
@@ -221,13 +253,13 @@ int main(int argc, char *argv[])
     openImgFile(imgCapacitor, pathTplDir + "/capacitor.png");
 
 
-    /** Step 1 : template matching for component designators (R, C, D) and R outlines **/
+    /** template matching for component designators (R, C, D) and R outlines **/
     vector<Rect> matchesR, matchesROutline, matchesC;
     matchesR = findTplMatchesInteractive(imgPcb, imgTplR, 'n', "Resistors");
     matchesROutline = findTplMatchesInteractive(imgPcb, imgTplROutline, 'n', "Resistors Outline");
     matchesC = findTplMatchesInteractive(imgPcb, imgTplC, 'n', "Capacitors");
 
-    /** Step 2 : Use connected component analysis to find the outlines of other components (C, D) **/
+    /** Use connected component analysis to find the outlines of other components (C, D) **/
     Mat imgGS; // grasycale version of input image
     Mat imgThr, imgThrMorph; // will hold thresholded, and eroded/dilated version of thresholded input image
     vector<Rect> otherOutlines;
@@ -239,7 +271,8 @@ int main(int argc, char *argv[])
     // A gray-scale version of the original image is thresholded to select only the silk screen and holes.
     // Then the holes are removed by first eroding away all the thin(compared to the white holes) silk screen lines
     // Alternative: use template matching on holes
-    GaussianBlur(imgGS, imgGS, Size(3, 3), 0.0);
+    GaussianBlur(imgGS, imgGS, Size(3, 3),
+                 0.0); // Add some blur, which will have extra affect of removing noise (especially in combination with the erosion applied below)
     cvtColor(imgPcb, imgGS, COLOR_BGR2GRAY);
     createTrackbar("Outline Threshold Trackbar", "Filtered Holes Result", &tbOutlineThr, 255, nullptr, nullptr);
     while(true)
@@ -295,14 +328,18 @@ int main(int argc, char *argv[])
     imgResult = imgPcb.clone();
     for(pair<Rect, Rect> pairR : pairsR)
     {
-        Mat resizedResistor;
-        resize(imgResistor, resizedResistor, pairR.first.size());
-        line(imgResult, getRectCenter(pairR.first), getRectCenter(pairR.second), Scalar(255, 0, 0));
-        resizedResistor.copyTo(imgResult(pairR.first));
+        Mat imgDestResistor;
+        resize(imgResistor, imgDestResistor, pairR.first.size());
+        line(imgResult, getRectCenter(pairR.first), getRectCenter(pairR.second), Scalar(255, 0, 0), 2);
+
+        Mat roiDst = imgResult(pairR.first);
+        copyToTransparent(roiDst, imgDestResistor);
     }
 
-    /** match Capacitor designators with nearest outline fomr otherOutlines vector **/
+
+    /** match Capacitor designators with nearest outline from otherOutlines vector **/
     // We match the matched designators with the outlines, as opposed to above, where we match the outlines with the resistors!
+    // (By switching around the parameters to getDesignatorOutlinePairs())
     // (Because of this, the items in the pair vector are switched (first <-> second))
     vector<pair<Rect, Rect> > pairsC = getDesignatorOutlinePairs(matchesC, otherOutlines);
     for(pair<Rect, Rect> pairC : pairsC)
@@ -310,12 +347,18 @@ int main(int argc, char *argv[])
         Mat imgDestCapacitor;
 
         imgDestCapacitor = imgCapacitor.clone();
+        // Sometimes the orientation of the designator and the outline do not match
+        // If this is the case, the components needs to be rotated. We check if supposed height and width of component
+        // are the true height and width of component. If not, rotate component before placing.
         if((float) pairC.second.height > pairC.second.width * 1.2)
         {
             rotate(imgCapacitor, imgDestCapacitor, ROTATE_90_CLOCKWISE);
         }
         resize(imgDestCapacitor, imgDestCapacitor, pairC.second.size());
-        imgDestCapacitor.copyTo(imgResult(pairC.second));
+        line(imgResult, getRectCenter(pairC.first), getRectCenter(pairC.second), Scalar(0, 255, 0), 2);
+
+        Mat roiDst = imgResult(pairC.second);
+        copyToTransparent(roiDst, imgDestCapacitor);
     }
 
     imshow("Final Result", imgResult);
